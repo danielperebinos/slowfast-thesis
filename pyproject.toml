@@ -4,7 +4,19 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "av>=16.1.0",
+    "boto3>=1.42.44",
+    "click>=8.3.1",
+    "mlflow>=3.9.0",
+    "opencv-python>=4.13.0.92",
+    "pandas>=2.3.3",
+    "psycopg2-binary>=2.9.11",
+    "pytorchvideo>=0.1.5",
+    "torch>=2.10.0",
+    "torchvision>=0.25.0",
+    "ultralytics>=8.4.12",
+]
 
 [dependency-groups]
 dev = [
