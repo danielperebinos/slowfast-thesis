@@ -1,0 +1,60 @@
+import torch
+
+
+def topk_accuracy(output, target, topk=(1,)):
+    """
+    Computes the accuracy over the k top predictions for the specified values of k.
+    """
+    with torch.no_grad():
+        maxk = max(topk)
+        batch_size = target.size(0)
+
+        _, pred = output.topk(maxk, 1, True, True)
+        pred = pred.t()
+        correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+        res = []
+        for k in topk:
+            correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
+            res.append(correct_k.mul_(100.0 / batch_size))
+        return res
+
+
+class AverageMeter:
+    """Computes and stores the average and current value"""
+
+    def __init__(self, name, fmt=":f"):
+        self.name = name
+        self.fmt = fmt
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
+
+    def __str__(self):
+        fmtstr = "{name} {val" + self.fmt + "} ({avg" + self.fmt + "})"
+        return fmtstr.format(**self.__dict__)
+
+
+def calculate_tta(prediction_time, start_time):
+    """
+    Calculate Time-to-Action (TTA).
+    TTA = t_pred - t_start
+    If positive: prediction made after action started (Late).
+    If negative: prediction made before action started (Early).
+    We aim for minimal positive TTA (earliest valid detection).
+
+    Args:
+        prediction_time: timestamp of stable prediction
+        start_time: timestamp of action start
+    """
+    return prediction_time - start_time
