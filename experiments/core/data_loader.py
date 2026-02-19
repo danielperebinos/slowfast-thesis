@@ -241,7 +241,7 @@ def make_ava_dataset(
         batch_size=batch_size,
         shuffle=(mode == "train"),
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=False,
         collate_fn=_slowfast_collate,
     )
     return loader, dataset
