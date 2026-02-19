@@ -1,6 +1,19 @@
 import torch
 
 
+def multilabel_accuracy(preds: torch.Tensor, targets: torch.Tensor, threshold: float = 0.5) -> torch.Tensor:
+    """
+    Per-label binary accuracy averaged across all labels and samples.
+    Suitable for multi-hot AVA annotations where each sample can have
+    multiple active action classes.
+
+    Returns a percentage in [0, 100].
+    """
+    with torch.no_grad():
+        pred_binary = (torch.sigmoid(preds) >= threshold).float()
+        return (pred_binary == targets).float().mean() * 100.0
+
+
 def topk_accuracy(output, target, topk=(1,)):
     """
     Computes the accuracy over the k top predictions for the specified values of k.
