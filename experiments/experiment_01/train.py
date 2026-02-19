@@ -150,8 +150,38 @@ def load_checkpoint(path, model, optimizer, scheduler):
 
 # ── streaming training orchestrator ──────────────────────────────────────────
 
+def streaming_validate(model, val_video_ids, label_map, criterion, device):
+    """
+    Download val videos, run validation, delete them.
+
+    Returns (val_loss, val_acc).  If no val videos are available, returns (0, 0).
+    """
+    print("\n  [val] downloading validation videos …")
+    available, to_delete = download_batch(val_video_ids, VIDEO_DIR)
+
+    if not available:
+        print("  [val] no validation videos available — skipping")
+        return 0.0, 0.0
+
+    try:
+        val_loader, _ = make_ava_dataset(
+            csv_path=VAL_CSV,
+            video_dir=VIDEO_DIR,
+            mode="val",
+            batch_size=BATCH_SIZE,
+            num_workers=NUM_WORKERS,
+            label_map=label_map,
+            video_ids=available,
+        )
+        val_loss, val_acc = validate(model, val_loader, criterion, device)
+    finally:
+        delete_batch(to_delete, VIDEO_DIR)
+
+    return val_loss, val_acc
+
+
 def streaming_train(
-    model, all_video_ids, label_map, val_loader,
+    model, all_video_ids, val_video_ids, label_map,
     criterion, optimizer, scheduler,
     device, epochs, start_epoch, start_chunk, best_val_acc,
 ):
@@ -159,6 +189,7 @@ def streaming_train(
     Main streaming loop.
 
     Iterates over epoch → chunk → download → train → delete.
+    Validation videos are also downloaded on-demand at the end of each epoch.
     Saves a checkpoint after every chunk so training can be safely interrupted.
     """
     num_classes = len(label_map)
@@ -239,8 +270,10 @@ def streaming_train(
             # ── 5. delete newly downloaded videos ─────────────────────────
             delete_batch(to_delete, VIDEO_DIR)
 
-        # ── end of epoch: validate ─────────────────────────────────────────
-        val_loss, val_acc = validate(model, val_loader, criterion, device)
+        # ── end of epoch: validate (streaming — download, run, delete) ───────
+        val_loss, val_acc = streaming_validate(
+            model, val_video_ids, label_map, criterion, device
+        )
         scheduler.step()
 
         mlflow.log_metrics(
@@ -284,19 +317,11 @@ def main():
     num_classes = len(label_map)
     print(f"Label map: {num_classes} action classes")
 
-    # ── all training video IDs (order is preserved across epochs) ──────────
+    # ── video ID lists — read from CSVs, no videos needed yet ─────────────
     import pandas as pd
     all_video_ids = pd.read_csv(TRAIN_CSV)["video_id"].unique().tolist()
-
-    # ── validation loader (test videos assumed pre-downloaded) ─────────────
-    val_loader, _ = make_ava_dataset(
-        csv_path=VAL_CSV,
-        video_dir=VIDEO_DIR,
-        mode="val",
-        batch_size=BATCH_SIZE,
-        num_workers=NUM_WORKERS,
-        label_map=label_map,
-    )
+    val_video_ids = pd.read_csv(VAL_CSV)["video_id"].unique().tolist()
+    print(f"Train videos: {len(all_video_ids)} | Val videos: {len(val_video_ids)}")
 
     # ── model / optimiser / scheduler ──────────────────────────────────────
     model     = get_model(num_classes=num_classes).to(DEVICE)
@@ -334,8 +359,8 @@ def main():
         best_val_acc = streaming_train(
             model=model,
             all_video_ids=all_video_ids,
+            val_video_ids=val_video_ids,
             label_map=label_map,
-            val_loader=val_loader,
             criterion=criterion,
             optimizer=optimizer,
             scheduler=scheduler,
