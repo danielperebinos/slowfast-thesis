@@ -30,10 +30,10 @@ from experiments.core.metrics import AverageMeter, multilabel_accuracy
 # ── configuration ─────────────────────────────────────────────────────────────
 
 EXPERIMENT_DIR = os.path.dirname(os.path.abspath(__file__))
-VIDEO_DIR  = os.path.join(EXPERIMENT_DIR, "data", "videos")
-TRAIN_CSV  = os.path.join(EXPERIMENT_DIR, "train.csv")
-VAL_CSV    = os.path.join(EXPERIMENT_DIR, "test.csv")
-CKPT_PATH  = os.path.join(EXPERIMENT_DIR, "checkpoint.pth")
+VIDEO_DIR  = os.getenv("VIDEO_DIR") or os.path.join(EXPERIMENT_DIR, "data", "videos")
+TRAIN_CSV  = os.getenv("TRAIN_CSV") or os.path.join(EXPERIMENT_DIR, "train.csv")
+VAL_CSV    = os.getenv("VAL_CSV") or os.path.join(EXPERIMENT_DIR, "test.csv")
+CKPT_PATH  = os.getenv("CKPT_PATH") or os.path.join(EXPERIMENT_DIR, "checkpoint.pth")
 
 EPOCHS      = 10
 BATCH_SIZE  = 4
