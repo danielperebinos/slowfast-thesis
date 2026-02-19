@@ -88,6 +88,18 @@ def get_val_transform(
     )
 
 
+def build_label_map(csv_path: str) -> dict:
+    """
+    Build a stable action_id → class_index mapping from a CSV file.
+
+    Call this once on the full training CSV before any videos are downloaded
+    so every chunk/epoch uses identical class indices.
+    """
+    df = pd.read_csv(csv_path)
+    action_ids = sorted(df["action"].unique().tolist())
+    return {aid: i for i, aid in enumerate(action_ids)}
+
+
 class AvaAnticipationDataset(torch.utils.data.Dataset):
     """
     Dataset for action anticipation from AVA-format CSV annotations.
@@ -101,6 +113,13 @@ class AvaAnticipationDataset(torch.utils.data.Dataset):
 
     AVA videos were trimmed starting at `time_offset` seconds of the original
     footage (default 900 s), so local file time = AVA timestamp - time_offset.
+
+    Parameters
+    ----------
+    video_ids : list | None
+        If given, only samples from these video IDs are included.
+        Used by the streaming trainer to restrict to the currently
+        downloaded chunk.
     """
 
     def __init__(
@@ -112,6 +131,7 @@ class AvaAnticipationDataset(torch.utils.data.Dataset):
         time_offset: float = 900.0,
         transform=None,
         label_map: dict = None,
+        video_ids: list = None,
     ):
         self.video_dir = video_dir
         self.clip_duration = clip_duration
@@ -121,6 +141,10 @@ class AvaAnticipationDataset(torch.utils.data.Dataset):
 
         df = pd.read_csv(csv_path)
 
+        # Filter to the requested video subset (streaming mode)
+        if video_ids is not None:
+            df = df[df["video_id"].isin(video_ids)]
+
         # Build label map: action_id -> class_index (sorted for reproducibility)
         if label_map is None:
             action_ids = sorted(df["action"].unique().tolist())
@@ -128,12 +152,6 @@ class AvaAnticipationDataset(torch.utils.data.Dataset):
         else:
             self.label_map = label_map
         self.num_classes = len(self.label_map)
-
-        # Verify video files exist before building the index
-        for vid_id in df["video_id"].unique():
-            path = os.path.join(video_dir, f"{vid_id}.mp4")
-            if not os.path.exists(path):
-                raise FileNotFoundError(f"Video file not found: {path}")
 
         # One sample per (video_id, ts): pool all persons' actions → multi-hot label
         self.samples = []
@@ -143,6 +161,13 @@ class AvaAnticipationDataset(torch.utils.data.Dataset):
                 if aid in self.label_map:
                     label[self.label_map[aid]] = 1.0
             self.samples.append({"video_id": vid_id, "ts": float(ts), "label": label})
+
+        # Verify only the files we actually need are present
+        referenced = {s["video_id"] for s in self.samples}
+        for vid_id in referenced:
+            path = os.path.join(video_dir, f"{vid_id}.mp4")
+            if not os.path.exists(path):
+                raise FileNotFoundError(f"Video file not found: {path}")
 
     def __len__(self):
         return len(self.samples)
@@ -191,6 +216,7 @@ def make_ava_dataset(
     batch_size: int = 4,
     num_workers: int = 2,
     label_map: dict = None,
+    video_ids: list = None,
 ) -> tuple:
     """
     Factory returning (DataLoader, AvaAnticipationDataset).
@@ -208,6 +234,7 @@ def make_ava_dataset(
         time_offset=time_offset,
         transform=transform,
         label_map=label_map,
+        video_ids=video_ids,
     )
     loader = torch.utils.data.DataLoader(
         dataset,
