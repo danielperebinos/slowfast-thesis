@@ -220,7 +220,7 @@ def _is_valid(path: Path) -> bool:
 
 def _collect_video_ids(csv_paths: list) -> list:
     """Read all unique video_ids from one or more AVA-format CSVs."""
-    frames = [pd.read_csv(p) for p in csv_paths]
+    frames = [pd.read_csv(p, names=["video_id", "ts", "x1", "y1", "x2", "y2", "action", "person_id"]) for p in csv_paths]
     combined = pd.concat(frames, ignore_index=True)
     return sorted(combined["video_id"].unique().tolist())
 
