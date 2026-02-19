@@ -118,7 +118,7 @@ def make_dataset(
     # Standard usage:
     dataset = labeled_video_dataset(
         data_path=csv_file,
-        clip_sampler=make_clip_sampler("random", clip_duration),
+        clip_sampler=make_clip_sampler("uniform", clip_duration),
         transform=transform,
         decode_audio=False,
     )

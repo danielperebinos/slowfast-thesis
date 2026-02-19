@@ -7,10 +7,12 @@ requires-python = ">=3.10"
 dependencies = [
     "mlflow>=3.9.0",
     "numpy<2.0",
+    "pandas>=2.3.3",
     "pytorchvideo==0.1.5",
     "torch==2.0.1",
     "torchvision==0.15.2",
     "ultralytics>=8.4.12",
+    "yt-dlp>=2026.2.4",
 ]
 
 
