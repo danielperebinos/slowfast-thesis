@@ -3,3 +3,5 @@
 volumes
 *.mp4
 *.zip
+.env
+mlflow.db
