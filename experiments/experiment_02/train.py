@@ -167,6 +167,7 @@ def main():
         label_map=label_map,
     )
 
+    mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000"))
     mlflow.set_experiment("SlowFast_Anticipation")
     with mlflow.start_run(run_name="Experiment_02_Attention"):
         mlflow.log_params(
