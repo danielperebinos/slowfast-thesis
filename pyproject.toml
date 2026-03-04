@@ -5,7 +5,9 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "gradio>=4.0",
     "mlflow>=3.9.0",
+    "opencv-python>=4.8",
     "numpy<2.0",
     "pandas>=2.3.3",
     "pytorchvideo==0.1.5",
@@ -13,6 +15,7 @@ dependencies = [
     "torchvision==0.15.2",
     "ultralytics>=8.4.12",
     "yt-dlp>=2026.2.4",
+    "loguru>=0.7.3",
 ]
 
 
