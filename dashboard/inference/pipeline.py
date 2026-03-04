@@ -1,9 +1,10 @@
 """InferencePipeline: orchestrates YOLO person detection + SlowFast action recognition."""
 
 import sys
-import time
 from collections import deque
 from pathlib import Path
+from threading import Lock, Thread
+from time import perf_counter
 
 import cv2
 import numpy as np
@@ -67,6 +68,7 @@ class InferencePipeline:
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = device
+        self.use_half = "cuda" in device
 
         logger.info("Loading SlowFast variant='{}' on {}", variant, device)
         self.model, self.num_classes, self.label_type = load_model(variant, checkpoint_dir, device)
@@ -81,6 +83,29 @@ class InferencePipeline:
         self.last_latency_ms: float = 0.0
         self._ts_window: deque = deque(maxlen=30)
 
+        # Async SlowFast inference state
+        self._inf_lock = Lock()
+        self._inf_thread: Thread | None = None
+
+    def _run_inference(self, slow: torch.Tensor, fast: torch.Tensor) -> None:
+        """Runs in a background daemon thread; updates last_predictions + last_latency_ms."""
+        t0 = perf_counter()
+        with torch.no_grad():
+            logits = self.model([slow.to(self.device), fast.to(self.device)])
+        latency = (perf_counter() - t0) * 1000
+
+        probs = F.softmax(logits[0].float(), dim=-1)
+        top_vals, top_idxs = torch.topk(probs, min(3, self.num_classes))
+        predictions = [
+            (self.labels[i] if i < len(self.labels) else f"class_{i}", float(v))
+            for i, v in zip(top_idxs.cpu().tolist(), top_vals.cpu().tolist())
+        ]
+        logger.debug("Top predictions: {}", predictions)
+
+        with self._inf_lock:
+            self.last_latency_ms = latency
+            self.last_predictions = predictions
+
     def process_frame(
         self,
         frame_rgb: np.ndarray,
@@ -94,12 +119,12 @@ class InferencePipeline:
         -------
         annotated_frame : np.ndarray  RGB
         predictions     : list of (label, confidence)
-        metrics         : dict {fps, latency_ms, inf_per_sec}
+        metrics         : dict {fps, latency_ms, inf_per_sec, buffer_fill}
         """
-        t_start = time.perf_counter()
+        t_start = perf_counter()
         frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
 
-        # YOLO person detection
+        # YOLO person detection (synchronous — always fresh boxes)
         boxes = []
         for r in self.yolo(frame_bgr, classes=[0], verbose=False):
             if r.boxes is not None:
@@ -111,33 +136,29 @@ class InferencePipeline:
         self.buffer.add(frame_bgr)
         self.frame_count += 1
 
-        # SlowFast inference
-        if self.buffer.is_ready() and self.frame_count % inference_interval == 0:
-            slow, fast = self.buffer.get_pathways()
-            t0 = time.perf_counter()
-            with torch.no_grad():
-                logits = self.model([slow.to(self.device), fast.to(self.device)])
-            self.last_latency_ms = (time.perf_counter() - t0) * 1000
-
-            probs = F.softmax(logits[0], dim=-1)
-            top_vals, top_idxs = torch.topk(probs, min(3, self.num_classes))
-            self.last_predictions = [
-                (self.labels[i] if i < len(self.labels) else f"class_{i}", float(v))
-                for i, v in zip(top_idxs.cpu().tolist(), top_vals.cpu().tolist())
-            ]
-            logger.debug("Top predictions: {}", self.last_predictions)
+        # Kick off async SlowFast inference when due
+        thread_idle = self._inf_thread is None or not self._inf_thread.is_alive()
+        if self.buffer.is_ready() and self.frame_count % inference_interval == 0 and thread_idle:
+            slow, fast = self.buffer.get_pathways(half=self.use_half)
+            self._inf_thread = Thread(target=self._run_inference, args=(slow, fast), daemon=True)
+            self._inf_thread.start()
 
         # Rolling FPS
         self._ts_window.append(t_start)
         elapsed = self._ts_window[-1] - self._ts_window[0] if len(self._ts_window) >= 2 else 0.0
         fps = (len(self._ts_window) - 1) / elapsed if elapsed > 0 else 0.0
 
-        inf_per_sec = 1000.0 / self.last_latency_ms if self.last_latency_ms > 0 else 0.0
+        with self._inf_lock:
+            latency = self.last_latency_ms
+            predictions = list(self.last_predictions)
+
+        inf_per_sec = 1000.0 / latency if latency > 0 else 0.0
         metrics = {
             "fps": round(fps, 1),
-            "latency_ms": round(self.last_latency_ms, 1),
+            "latency_ms": round(latency, 1),
             "inf_per_sec": round(inf_per_sec, 2),
+            "buffer_fill": self.buffer.fill_count,
         }
 
-        annotated = _annotate(frame_bgr, boxes, self.last_predictions, fps, self.last_latency_ms)
-        return cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), self.last_predictions, metrics
+        annotated = _annotate(frame_bgr, boxes, predictions, fps, latency)
+        return cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), predictions, metrics

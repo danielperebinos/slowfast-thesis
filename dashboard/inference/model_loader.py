@@ -93,14 +93,15 @@ def load_model(
         state_key = "model_state_dict" if "model_state_dict" in ckpt else "state_dict"
         model.load_state_dict(ckpt[state_key] if state_key in ckpt else ckpt, strict=False)
     else:
-        logger.warning("No checkpoint found for '{}'. Falling back to pretrained Kinetics-400 weights.", variant)
+        logger.warning(
+            "No checkpoint found for '{}'. Using randomly-initialised weights (Kinetics-400 classes).", variant
+        )
         num_classes = 400
         label_type = "kinetics"
-        if variant == "baseline":
-            model = torch.hub.load("facebookresearch/pytorchvideo", "slowfast_r50", pretrained=True)
-        else:
-            model = _FACTORIES[variant](num_classes)
+        model = _FACTORIES[variant](num_classes)
 
+    if "cuda" in device:
+        model.half()
     model.eval()
     model.to(device)
     return model, num_classes, label_type

@@ -23,6 +23,9 @@ class FrameBuffer:
         self._buf: deque = deque(maxlen=maxlen)
         self._maxlen = maxlen
         self._pack = PackPathway(slow_frames=4, fast_frames=maxlen)
+        # Pre-compute normalisation tensors once
+        self._mean = torch.tensor(MEAN).view(3, 1, 1, 1)
+        self._std = torch.tensor(STD).view(3, 1, 1, 1)
 
     def add(self, frame_bgr: np.ndarray) -> None:
         self._buf.append(frame_bgr)
@@ -30,7 +33,11 @@ class FrameBuffer:
     def is_ready(self) -> bool:
         return len(self._buf) == self._maxlen
 
-    def get_pathways(self) -> tuple[torch.Tensor, torch.Tensor]:
+    @property
+    def fill_count(self) -> int:
+        return len(self._buf)
+
+    def get_pathways(self, half: bool = False) -> tuple[torch.Tensor, torch.Tensor]:
         """Return (slow_tensor, fast_tensor) with shape (1, C, T, H, W)."""
         frames = list(self._buf)  # list of H×W×3 BGR uint8
 
@@ -47,9 +54,7 @@ class FrameBuffer:
 
         # (T, H, W, C) → (C, T, H, W), normalise
         video = torch.from_numpy(np.stack(resized)).permute(3, 0, 1, 2).float() / 255.0
-        mean = torch.tensor(MEAN).view(3, 1, 1, 1)
-        std = torch.tensor(STD).view(3, 1, 1, 1)
-        video = (video - mean) / std  # (C, T, H, W)
+        video = (video - self._mean) / self._std  # (C, T, H, W)
 
         # Center crop
         _, _, H, W = video.shape
@@ -58,4 +63,7 @@ class FrameBuffer:
         video = video[:, :, top:top + CROP_SIZE, left:left + CROP_SIZE]
 
         slow, fast = self._pack(video)
-        return slow.unsqueeze(0), fast.unsqueeze(0)
+        slow, fast = slow.unsqueeze(0), fast.unsqueeze(0)
+        if half:
+            slow, fast = slow.half(), fast.half()
+        return slow, fast
