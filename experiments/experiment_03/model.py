@@ -26,11 +26,15 @@ class RoiGuidanceSlowFast(nn.Module):
             input_channels=(3, 3),
             head_pool=nn.AdaptiveAvgPool3d,
         )
-        self.yolo = YOLO(yolo_model)
         self.alpha_blend = alpha_blend
 
-        for param in self.yolo.parameters():
+        # Store YOLO outside the nn.Module hierarchy to prevent PyTorch from
+        # calling .train(mode) on it — ultralytics overrides train() as a
+        # training launcher, which conflicts with PyTorch's mode-setter.
+        yolo = YOLO(yolo_model)
+        for param in yolo.parameters():
             param.requires_grad = False
+        object.__setattr__(self, "_yolo", yolo)
 
     def get_roi_mask(self, x_fast: torch.Tensor) -> torch.Tensor:
         """Build (B, 1, T, H, W) binary masks from YOLO detections on strided frames."""
@@ -48,7 +52,7 @@ class RoiGuidanceSlowFast(nn.Module):
                     frame = (x_fast[b, :, t] * std + mean).clamp(0.0, 1.0)
                     frame_np = (frame.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
 
-                    results = self.yolo(frame_np, verbose=False)
+                    results = self._yolo(frame_np, verbose=False)
                     boxes = results[0].boxes
 
                     # fill detected ROI boxes
