@@ -44,11 +44,13 @@ class HybridSlowFast(nn.Module):
             head_pool=nn.AdaptiveAvgPool3d,
         )
 
-        # 1. ROI Components
-        self.yolo = YOLO(yolo_model)
+        # 1. ROI Components — stored outside nn.Module hierarchy to avoid
+        # ultralytics YOLO.train() conflicting with PyTorch's mode-setter.
         self.alpha_blend = alpha_blend
-        for param in self.yolo.parameters():
+        yolo = YOLO(yolo_model)
+        for param in yolo.parameters():
             param.requires_grad = False
+        object.__setattr__(self, "_yolo", yolo)
 
         # 2. Attention Components
         self._inject_nonlocal()
@@ -77,7 +79,7 @@ class HybridSlowFast(nn.Module):
                     frame = (x_fast[b, :, t] * std + mean).clamp(0.0, 1.0)
                     frame_np = (frame.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
 
-                    results = self.yolo(frame_np, verbose=False)
+                    results = self._yolo(frame_np, verbose=False)
                     boxes = results[0].boxes
 
                     t_end = min(t + stride, T)
