@@ -1,0 +1,46 @@
+# Dashboard build context: the Dockerfile sits under dashboard/ but the build
+# context is the project root (see compose.yml). We keep the image lean by
+# excluding assets that will be bind-mounted read-only at runtime.
+
+# Version control / editor noise
+.git
+.idea
+.vscode
+*.swp
+.DS_Store
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Bind-mounted at runtime — do NOT bake into the image
+AVA/
+volumes/
+mlruns/
+mlflow.db
+copy/
+
+# Training-only heavy checkpoints (optimizer + scheduler state), bind-mounted
+experiments/*/checkpoint.pth
+
+# CSVs are bind-mounted via experiments/:ro — no need to copy them in
+experiments/**/*.csv
+
+# Archives and secrets
+*.zip
+*.tar.gz
+.env
+.env.local
+
+# Log files
+*.log

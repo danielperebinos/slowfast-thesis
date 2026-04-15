@@ -1,0 +1,80 @@
+[project]
+name = "slowfast-dashboard"
+version = "0.1.0"
+description = "Streamlit inference dashboard for the four trained SlowFast variants (thesis defense demo)."
+requires-python = ">=3.10"
+dependencies = [
+    # Re-declare the exact pins from the root project so trained checkpoints
+    # load into identical model graphs. Drift here = state_dict mismatch.
+    "torch==2.0.1",
+    "torchvision==0.15.2",
+    "pytorchvideo==0.1.5",
+    "numpy<2.0",
+    "pandas>=2.3.3",
+    "ultralytics>=8.4.12",
+    # Dashboard-specific
+    "streamlit>=1.40.0",
+    "opencv-python-headless>=4.10.0",
+    "pillow>=10.0.0",
+]
+
+# [FIX] The dashboard is an application, not a library. Without this block
+# `uv pip install .` (in the Docker image) invokes setuptools' flat-layout
+# auto-discovery, which sees `inference/`, `ui/`, and `tests/` as candidate
+# top-level packages and refuses to build with:
+#   "Multiple top-level packages discovered in a flat-layout"
+# Declaring packages=[] + py-modules=[] tells setuptools: build an empty
+# distribution named `slowfast-dashboard`, just install the dependencies
+# from [project] above. The actual source is served to the running
+# container via the bind mount in compose.yml (`./:/workspace/dashboard:ro`).
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = []
+py-modules = []
+
+[[tool.uv.index]]
+name = "pytorch-cu118"
+url = "https://download.pytorch.org/whl/cu118"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu118", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+    { index = "pytorch-cu118", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.0",
+    "pytest>=8.0.0",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "B", "C4", "UP", "N", "SIM", "TID", "PERF",
+]
+ignore = [
+    "N806",  # math-style locals (T, C, H, W)
+    "B007",
+    "N803",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: heavy tests that load real checkpoints and run forward passes",
+]
+log_cli = true
+log_cli_level = "INFO"

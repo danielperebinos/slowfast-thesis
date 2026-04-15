@@ -1,0 +1,55 @@
+# SlowFast Dashboard — inference-only stack.
+#
+# ⚠️  SAFETY CONTRACT ⚠️
+# This compose file MUST NOT declare any `volumes:` section that references
+# ../volumes/postgres, ../volumes/minio, or any other host path from the
+# MLflow stack (compose.experiments.yml). Those volumes are protected —
+# see .ai-factory/RULES.md. The dashboard only bind-mounts the experiments/
+# and AVA/ trees READ-ONLY so it cannot write to any trained model file.
+#
+# Never run `docker compose -f compose.yml down -v` against this stack.
+# Use the Makefile: `make down` (no -v).
+
+name: slowfast-dashboard
+
+services:
+  dashboard:
+    build:
+      context: ..
+      dockerfile: dashboard/Dockerfile
+    image: slowfast-dashboard:latest
+    container_name: slowfast-dashboard
+    restart: unless-stopped
+    ports:
+      - "${DASHBOARD_PORT:-8501}:8501"
+    environment:
+      PROJECT_ROOT: /workspace
+      MODEL_ROOT: /workspace/experiments
+      VIDEO_ROOT: /workspace/AVA
+      DASHBOARD_LOG_LEVEL: ${DASHBOARD_LOG_LEVEL:-DEBUG}
+      # Informational — dashboard does not write to MLflow.
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://host.docker.internal:5000}
+    volumes:
+      # READ-ONLY bind mounts — trained model files must never be mutated.
+      - ../experiments:/workspace/experiments:ro
+      - ../AVA:/workspace/AVA:ro
+      # Dashboard source for hot-reload during dev; also read-only in the
+      # container (the image already has a working copy baked in).
+      - ./:/workspace/dashboard:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    extra_hosts:
+      # Lets the container reach the MLflow stack running on the host at
+      # localhost:5000 via host.docker.internal (Linux docker 20.10+).
+      - "host.docker.internal:host-gateway"

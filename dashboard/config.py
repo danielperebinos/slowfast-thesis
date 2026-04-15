@@ -1,0 +1,126 @@
+"""Single source of truth for dashboard paths, variant registry, and
+preprocessing constants.
+
+**Do not put any I/O here.** This module must stay import-safe so tests and
+unit checks can pick it up without touching the filesystem or loading a
+model. All path defaults are derived from env vars; override via:
+
+- ``PROJECT_ROOT``  — absolute path to the slowfast-thesis checkout
+- ``MODEL_ROOT``    — where the four ``experiment_0N/`` folders live
+- ``VIDEO_ROOT``    — where AVA ``*.mp4`` clips live
+
+Preprocessing constants mirror ``experiments/core/data_loader.py``
+``get_val_transform`` exactly. Drift here invalidates the trained weights.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+from logging_setup import get_logger
+
+logger = get_logger(__name__)
+
+# ── Paths ────────────────────────────────────────────────────────────────────
+
+# dashboard/ sits at <PROJECT_ROOT>/dashboard/; the default project root is
+# the parent of this file's directory.
+_DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+PROJECT_ROOT: Path = Path(os.getenv("PROJECT_ROOT") or _DEFAULT_PROJECT_ROOT)
+EXPERIMENTS_DIR: Path = Path(os.getenv("MODEL_ROOT") or (PROJECT_ROOT / "experiments"))
+VIDEO_DIR: Path = Path(os.getenv("VIDEO_ROOT") or (PROJECT_ROOT / "AVA"))
+
+# YOLO weights used by variants 03 and 04 live inside the experiments tree.
+YOLO_WEIGHTS: Path = EXPERIMENTS_DIR / "yolov8n.pt"
+
+# CSV used to rebuild the same label map the four experiments trained against.
+# All four experiments share the same CSVs after `make data-splits-all`, so
+# experiment_01's copy is authoritative.
+LABEL_MAP_CSV: Path = EXPERIMENTS_DIR / "experiment_01" / "train.csv"
+
+# Test CSV (AVA ground-truth annotations) used for live TTA lookup.
+TTA_ANNOTATIONS_CSV: Path = EXPERIMENTS_DIR / "experiment_01" / "test.csv"
+
+# ── Preprocessing constants — must match experiments/core/data_loader.py ─────
+
+NUM_FRAMES: int = 32
+SHORT_SIDE: int = 256
+CROP_SIZE: int = 224
+MEAN: tuple[float, float, float] = (0.45, 0.45, 0.45)
+STD: tuple[float, float, float] = (0.225, 0.225, 0.225)
+SLOWFAST_ALPHA: int = 8
+SLOW_FRAMES: int = NUM_FRAMES // SLOWFAST_ALPHA  # 4
+CLIP_DURATION_SEC: float = 2.0
+ANTICIPATION_GAP_SEC: float = 1.0  # same default as AvaAnticipationDataset
+TIME_OFFSET_SEC: float = 900.0  # AVA file-local time offset
+
+# ── Dashboard runtime knobs ──────────────────────────────────────────────────
+
+# How often (in raw video frames) to trigger an inference pass during
+# playback. Lower = smoother metrics but more GPU load.
+INFERENCE_STRIDE_FRAMES: int = 8
+
+# Rolling buffer size — must be at least NUM_FRAMES so the preprocessor can
+# temporally subsample a full clip per step.
+FRAME_BUFFER_SIZE: int = NUM_FRAMES * 2
+
+# Default top-k for the results panel.
+DEFAULT_TOPK: int = 5
+
+# Latency history length (entries) for the p50/p95/p99 summary.
+LATENCY_HISTORY: int = 120
+
+
+# ── Variant registry ─────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class VariantSpec:
+    """Static metadata about a trained SlowFast variant."""
+
+    key: str
+    label: str
+    checkpoint: Path
+    yolo_required: bool
+
+
+VARIANTS: dict[str, VariantSpec] = {
+    "01_baseline": VariantSpec(
+        key="01_baseline",
+        label="01 · Baseline (SlowFast R50)",
+        checkpoint=EXPERIMENTS_DIR / "experiment_01" / "best_baseline.pth",
+        yolo_required=False,
+    ),
+    "02_attention": VariantSpec(
+        key="02_attention",
+        label="02 · Attention (Non-Local)",
+        checkpoint=EXPERIMENTS_DIR / "experiment_02" / "best_attention.pth",
+        yolo_required=False,
+    ),
+    "03_roi": VariantSpec(
+        key="03_roi",
+        label="03 · ROI Guidance (YOLO)",
+        checkpoint=EXPERIMENTS_DIR / "experiment_03" / "best_roi.pth",
+        yolo_required=True,
+    ),
+    "04_hybrid": VariantSpec(
+        key="04_hybrid",
+        label="04 · Hybrid (ROI + Attention)",
+        checkpoint=EXPERIMENTS_DIR / "experiment_04" / "best_hybrid.pth",
+        yolo_required=True,
+    ),
+}
+
+DEFAULT_VARIANT_KEY: str = "01_baseline"
+
+
+logger.debug(
+    "config loaded: project_root=%s experiments=%s video_dir=%s variants=%d",
+    PROJECT_ROOT,
+    EXPERIMENTS_DIR,
+    VIDEO_DIR,
+    len(VARIANTS),
+)
