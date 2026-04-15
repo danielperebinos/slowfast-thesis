@@ -16,7 +16,7 @@ import torch
 
 from config import VARIANTS, VIDEO_DIR
 from inference.engine import InferenceEngine, InferenceResult
-from inference.metrics import LatencyTracker, format_ms, format_tta
+from inference.metrics import LatencyTracker, format_ms
 from logging_setup import get_logger
 from ui import state
 
@@ -116,29 +116,37 @@ def video_frame_preview(frame_rgb: np.ndarray | None, current_sec: float | None)
 def results_panel(
     result: InferenceResult | None,
     latency: LatencyTracker | None,
-    tta_value: float | None,
+    tta_value: float | None,  # noqa: ARG001 — kept in signature, HUD owns the TTA metric
 ) -> None:
-    """Three-column metrics row + top-k bar chart + expandable raw probs."""
-    col_forward, col_fps, col_tta = st.columns(3)
+    """Drill-down panel for the Details expander.
 
-    if result is None:
-        col_forward.metric("Forward", "—")
-        col_fps.metric("FPS (p50)", "—")
-        col_tta.metric("TTA", "—")
-        st.caption("Metrics appear after the first inference pass.")
+    The 3 headline metrics (Forward, FPS, TTA) are rendered by the on-video
+    HUD; this panel now shows only the long-tail: a latency-history line
+    chart, a percentile caption, the top-k bar chart, and a raw-probs table
+    for debugging.
+    """
+    if result is None and (latency is None or len(latency) == 0):
+        st.caption("Details appear after the first inference pass.")
         return
 
-    summary = latency.summary() if latency is not None else None
-    fps_label = f"{summary.fps:.1f}" if (summary and summary.fps > 0) else "—"
-    col_forward.metric("Forward", format_ms(result.forward_ms))
-    col_fps.metric("FPS (p50)", fps_label)
-    col_tta.metric("TTA", format_tta(tta_value))
+    # Latency history (most recent 60 samples).
+    if latency is not None:
+        recent = latency.recent(60)
+        if recent:
+            st.line_chart(
+                {"forward_ms": recent},
+                height=120,
+                use_container_width=True,
+            )
+        summary = latency.summary()
+        if summary.samples > 0:
+            st.caption(
+                f"latency: p50={format_ms(summary.p50)} · p95={format_ms(summary.p95)} · "
+                f"p99={format_ms(summary.p99)} · max={format_ms(summary.max)}"
+            )
 
-    if summary is not None:
-        st.caption(
-            f"latency: p50={format_ms(summary.p50)} · p95={format_ms(summary.p95)} · "
-            f"p99={format_ms(summary.p99)} · max={format_ms(summary.max)} · n={summary.samples}"
-        )
+    if result is None:
+        return
 
     # Top-k bar chart: action -> score.
     chart_df = pd.DataFrame(

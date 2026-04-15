@@ -59,12 +59,24 @@ TIME_OFFSET_SEC: float = 900.0  # AVA file-local time offset
 
 # ── Dashboard runtime knobs ──────────────────────────────────────────────────
 
-# How often (in raw video frames) to trigger an inference pass during
-# playback. Lower = smoother metrics but more GPU load.
+# Target playback FPS. The playback loop fast-skips intervening video frames
+# (via cv2.VideoCapture.grab — no decode) to match this cadence. Streamlit's
+# rerun cycle cannot sustain 25–30 FPS; 12–15 FPS looks smooth and keeps
+# decode + st.image cost down.
+#
+# Overridable via env var: DASHBOARD_PLAYBACK_FPS=<int>. Clamped to [1, 60].
+PLAYBACK_FPS_CAP: int = max(1, min(60, int(os.getenv("DASHBOARD_PLAYBACK_FPS", "13"))))
+
+# How often (in *kept* video frames, post frame-skip) to trigger an inference
+# pass during playback. Inference runs on the last NUM_FRAMES frames of the
+# rolling buffer every INFERENCE_STRIDE_FRAMES kept frames.
 INFERENCE_STRIDE_FRAMES: int = 8
 
 # Rolling buffer size — must be at least NUM_FRAMES so the preprocessor can
-# temporally subsample a full clip per step.
+# temporally subsample a full clip per step. Buffer holds only *kept* frames,
+# so the clip it represents spans FRAME_BUFFER_SIZE / PLAYBACK_FPS_CAP seconds
+# of real video (default 64 / 13 ≈ 4.9s; UniformTemporalSubsample then picks
+# 32 evenly-spaced frames, landing close to the 2.0s training distribution).
 FRAME_BUFFER_SIZE: int = NUM_FRAMES * 2
 
 # Default top-k for the results panel.
@@ -118,9 +130,10 @@ DEFAULT_VARIANT_KEY: str = "01_baseline"
 
 
 logger.debug(
-    "config loaded: project_root=%s experiments=%s video_dir=%s variants=%d",
+    "config loaded: project_root=%s experiments=%s video_dir=%s variants=%d playback_fps_cap=%d",
     PROJECT_ROOT,
     EXPERIMENTS_DIR,
     VIDEO_DIR,
     len(VARIANTS),
+    PLAYBACK_FPS_CAP,
 )

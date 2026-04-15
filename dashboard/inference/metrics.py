@@ -60,6 +60,17 @@ class LatencyTracker:
     def __len__(self) -> int:  # pragma: no cover — trivial
         return len(self._buf)
 
+    def recent(self, n: int = 60) -> list[float]:
+        """Return the most recent ``n`` forward_ms samples, oldest → newest.
+
+        Used by the details expander to show a compact latency line-chart.
+        Empty list when the buffer is empty.
+        """
+        if not self._buf:
+            return []
+        n = max(1, n)
+        return list(self._buf)[-n:]
+
     def summary(self) -> LatencySummary:
         if not self._buf:
             return LatencySummary(

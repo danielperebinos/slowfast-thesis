@@ -28,12 +28,12 @@ import streamlit as st
 import torch
 
 from config import (
-    CLIP_DURATION_SEC,
     DEFAULT_TOPK,
     EXPERIMENTS_DIR,
     FRAME_BUFFER_SIZE,
     INFERENCE_STRIDE_FRAMES,
     NUM_FRAMES,
+    PLAYBACK_FPS_CAP,
     TTA_ANNOTATIONS_CSV,
     VARIANTS,
     VIDEO_DIR,
@@ -44,6 +44,7 @@ from inference.model_loader import load_label_map, load_variant
 from inference.preprocess import ClipPreprocessor
 from logging_setup import get_logger, log_cuda_environment
 from ui import components, state
+from ui.overlay import HudData, draw_hud
 
 logger = get_logger(__name__)
 
@@ -196,27 +197,42 @@ if video_path is not None and str(video_path) != prev_video:
     state.set_last_tta(None)
     st.session_state["dashboard._prev_video_path"] = str(video_path)
 
-# Main layout.
-left, right = st.columns([3, 4])
+# Main layout — single column. Video + HUD is the primary visual; details go
+# into a collapsed expander below.
+st.subheader("Stream")
+placeholder_frame = st.empty()
+placeholder_progress = st.empty()
 
-with left:
-    st.subheader("Stream")
-    placeholder_frame = st.empty()
-    placeholder_progress = st.empty()
-
-with right:
-    st.subheader("Predictions")
+details_expander = st.expander("Details (top-k, probs, latency history)", expanded=False)
+with details_expander:
     placeholder_metrics = st.container()
 
 
+# Minimum wall-clock interval between `Details` expander refreshes. Playback
+# ticks at PLAYBACK_FPS_CAP (default 13 FPS); refreshing the bar chart + line
+# chart every frame is wasteful, so we throttle it to ~1 Hz.
+_DETAILS_REFRESH_INTERVAL_SEC = 1.0
+
+
+def _build_hud(result, latency: LatencyTracker | None, tta_val: float | None) -> HudData:
+    """Assemble the HUD payload from current session state."""
+    action = result.topk[0].action if (result is not None and result.topk) else None
+    score = result.topk[0].score if (result is not None and result.topk) else None
+    p50 = None
+    if latency is not None:
+        summary = latency.summary()
+        if summary.samples > 0:
+            p50 = summary.p50
+    return HudData(action=action, score=score, latency_p50_ms=p50, tta_sec=tta_val)
+
+
 def _render_idle() -> None:
-    with placeholder_frame.container():
-        components.video_frame_preview(None, None)
+    placeholder_frame.info("Press Start to begin playback.")
     with placeholder_metrics:
         components.results_panel(state.get_last_result(), state.get_latency_tracker(), state.get_last_tta())
 
 
-def _do_playback(single_step: bool) -> None:  # noqa: C901, PLR0912 — main loop
+def _do_playback(single_step: bool) -> None:  # noqa: C901, PLR0912, PLR0915 — main loop
     if engine is None or video_path is None:
         _render_idle()
         return
@@ -233,26 +249,48 @@ def _do_playback(single_step: bool) -> None:  # noqa: C901, PLR0912 — main loo
     tta = state.get_tta_computer()
     latency = state.get_latency_tracker()
 
-    frame_idx = 0
+    # Frame-skip stride: how many raw-video frames advance per "kept" frame.
+    stride = max(1, int(round(video_fps / PLAYBACK_FPS_CAP)))
+    target_frame_dt = 1.0 / PLAYBACK_FPS_CAP
+    buffer_sec = FRAME_BUFFER_SIZE / PLAYBACK_FPS_CAP
+
+    logger.debug(
+        "playback: video_fps=%.1f target_fps=%d stride=%d buffer_sec=%.2f",
+        video_fps,
+        PLAYBACK_FPS_CAP,
+        stride,
+        buffer_sec,
+    )
+
+    frame_idx = 0  # real-video frame index (advances by `stride` per iteration)
+    kept_idx = 0   # number of frames we have decoded and displayed
+    frames_decoded = 0
+    last_details_refresh = 0.0
+    started_at = time.perf_counter()
+
     try:
         while True:
+            iter_start = time.perf_counter()
+
+            # Decode the "kept" frame. `frame_idx` is the real-video index of
+            # *this* frame, so compute `current_sec` from it BEFORE we advance.
             frame_rgb = _read_frame_rgb(cap)
             if frame_rgb is None:
-                logger.info("video ended at frame=%d", frame_idx)
+                logger.info("video ended at kept_frame=%d", kept_idx)
                 break
+            frames_decoded += 1
+            current_sec = frame_idx / video_fps
+            kept_idx += 1
 
             buffer.append(frame_rgb)
-            current_sec = frame_idx / video_fps
 
-            # Refresh the frame preview every raw frame (cheap).
-            with placeholder_frame.container():
-                components.video_frame_preview(frame_rgb, current_sec)
-            if total_frames > 0:
-                placeholder_progress.progress(min(1.0, (frame_idx + 1) / total_frames))
-
-            # Run inference every INFERENCE_STRIDE_FRAMES once we have a full buffer.
+            # Run inference every INFERENCE_STRIDE_FRAMES *kept* frames once
+            # the rolling buffer is warm. This cadence now scales with the
+            # playback target (PLAYBACK_FPS_CAP), not the raw video FPS —
+            # deliberate: demo-facing inference rate stays steady regardless
+            # of the source clip's native FPS.
             ready = len(buffer) >= NUM_FRAMES
-            should_infer = ready and (frame_idx % INFERENCE_STRIDE_FRAMES == 0)
+            should_infer = ready and (kept_idx % INFERENCE_STRIDE_FRAMES == 0)
 
             if should_infer:
                 try:
@@ -260,40 +298,81 @@ def _do_playback(single_step: bool) -> None:  # noqa: C901, PLR0912 — main loo
                     result = engine.run(frames, k=topk)
                     if latency is not None:
                         latency.record(result)
-                    result.clip_end_sec = current_sec - CLIP_DURATION_SEC  # approximate local clip-end time
+                    # The observation window ENDS at current_sec (that's the
+                    # last frame we just fed the model). Matches the
+                    # calculate_tta semantics in experiments/core/metrics.py.
+                    result.clip_end_sec = current_sec
                     state.set_last_result(result)
 
                     if tta is not None:
                         predicted_actions = {p.action for p in result.topk}
-                        tta_val = tta.step(result.clip_end_sec or current_sec, predicted_actions)
+                        tta_val = tta.step(current_sec, predicted_actions)
                         state.set_last_tta(tta_val)
                     else:
                         state.set_last_tta(None)
                 except Exception as err:  # noqa: BLE001
-                    logger.exception("inference error at frame=%d: %s", frame_idx, err)
+                    logger.exception("inference error at kept_frame=%d: %s", kept_idx, err)
                     st.error(f"Inference error: {err}")
 
+            # Fast-skip the next (stride - 1) frames without decoding. Do this
+            # AFTER we've finished with the current frame (display, inference)
+            # so `current_sec` above reflected the frame we actually showed.
+            end_of_stream = False
+            for _ in range(stride - 1):
+                if not cap.grab():
+                    end_of_stream = True
+                    break
+            frame_idx += stride
+
+            # Bake the HUD onto the frame and render with a single st.image.
+            hud = _build_hud(
+                state.get_last_result(),
+                latency,
+                state.get_last_tta(),
+            )
+            frame_with_hud = draw_hud(frame_rgb, hud)
+            placeholder_frame.image(
+                frame_with_hud,
+                caption=f"t = {current_sec:.2f}s",
+                use_container_width=True,
+            )
+
+            if total_frames > 0:
+                placeholder_progress.progress(min(1.0, frame_idx / total_frames))
+
+            # Throttle the Details expander refresh to ~1 Hz of wall clock.
+            now = time.perf_counter()
+            if now - last_details_refresh >= _DETAILS_REFRESH_INTERVAL_SEC:
                 with placeholder_metrics:
                     components.results_panel(
                         state.get_last_result(),
                         state.get_latency_tracker(),
                         state.get_last_tta(),
                     )
+                last_details_refresh = now
 
-            frame_idx += 1
-
-            if single_step:
+            if single_step or end_of_stream:
+                if end_of_stream:
+                    logger.info("video ended mid-skip at kept_frame=%d", kept_idx)
                 break
 
-            # Respect Stop clicks: re-check the flag after each frame.
+            # Respect Stop clicks.
             if not st.session_state.get(state.PLAYING, False):
-                logger.debug("playback stopped by user at frame=%d", frame_idx)
+                logger.debug("playback stopped by user at kept_frame=%d", kept_idx)
                 break
 
-            # Be nice to Streamlit's event loop.
-            time.sleep(max(0.0, 1.0 / video_fps))
+            # Pace the loop to hit the target cadence.
+            elapsed = time.perf_counter() - iter_start
+            time.sleep(max(0.0, target_frame_dt - elapsed))
     finally:
         cap.release()
+        total_elapsed = time.perf_counter() - started_at
+        logger.info(
+            "playback end: frames_shown=%d frames_decoded=%d elapsed=%.1fs",
+            kept_idx,
+            frames_decoded,
+            total_elapsed,
+        )
         # Do NOT clear_cache() here — we want the engine warm for the next Start.
 
 

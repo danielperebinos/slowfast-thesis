@@ -159,6 +159,40 @@ def test_latency_tracker_empty_summary() -> None:
 # ── 14.6 — GPU parameter placement ─────────────────────────────────────────
 
 
+# ── 14.7 — HUD overlay invariants ────────────────────────────────────────────
+
+
+def test_draw_hud_preserves_shape_and_dtype() -> None:
+    from ui.overlay import HudData, draw_hud
+
+    frame = np.random.randint(0, 256, size=(360, 640, 3), dtype=np.uint8)
+    hud = HudData(
+        action="pick up",
+        score=0.73,
+        latency_p50_ms=21.4,
+        tta_sec=-0.35,
+    )
+    out = draw_hud(frame, hud)
+
+    assert out.shape == frame.shape
+    assert out.dtype == frame.dtype
+    assert not np.array_equal(out, frame), "draw_hud did not modify the frame"
+
+
+def test_draw_hud_handles_none_fields_and_small_frame() -> None:
+    from ui.overlay import HudData, draw_hud
+
+    frame = np.zeros((224, 224, 3), dtype=np.uint8)
+    hud = HudData(action=None, score=None, latency_p50_ms=None, tta_sec=None)
+    out = draw_hud(frame, hud)
+
+    assert out.shape == frame.shape
+    assert out.dtype == frame.dtype
+
+
+# ── 14.4 — GPU parameter placement (slow) ───────────────────────────────────
+
+
 @pytest.mark.slow
 def test_model_parameters_land_on_cuda_when_available() -> None:
     """Proves GPU routing works end-to-end.
