@@ -5,3 +5,11 @@ volumes
 *.zip
 .env
 mlflow.db
+AVA
+.claude
+.ai-factory
+.ai-factory.json
+copy
+*.pth
+mlruns
+__pycache__

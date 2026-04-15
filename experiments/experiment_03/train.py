@@ -37,7 +37,7 @@ YOLO_MODEL = os.getenv("YOLO_MODEL") or os.path.join(EXPERIMENTS_DIR, "yolov8n.p
 CKPT_PATH  = os.getenv("CKPT_PATH")  or os.path.join(EXPERIMENT_DIR, "checkpoint.pth")
 
 EPOCHS      = 10
-BATCH_SIZE  = 2
+BATCH_SIZE  = 6
 LR          = 0.01
 NUM_WORKERS = 0
 LOSS_ALPHA  = float(os.getenv("LOSS_ALPHA",  "0.25"))

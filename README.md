@@ -223,3 +223,18 @@ CLI-ul trebuie să fie reproductibil și scriptabil.
 - Rezultatele apar în MLflow cu parametri și metrici complete.
 - Există un `results.csv` comparativ + concluzie (varianta aleasă) bazată pe Pareto (precizie vs TTA vs FPS).
 - Codul este modular (variantă selectabilă fără duplicare masivă).
+
+---
+
+## Documentation (developer guide, English)
+
+The sections above are the thesis scope document. Day-to-day development notes live under [`docs/`](docs/):
+
+| Page | Description |
+|------|-------------|
+| [Getting Started](docs/getting-started.md) | Install, bring up the MLflow stack, prepare data, run the first experiment. |
+| [Architecture](docs/architecture.md) | Module boundaries, dependency rules, training-script skeleton. |
+| [Experiments](docs/experiments.md) | Variants registry, hyperparameters, how to add a new variant. |
+| [MLflow Stack](docs/mlflow-stack.md) | Postgres + MinIO + MLflow server, env vars, volume safety. |
+
+> ⚠️ **Do not delete Docker volumes** (`./volumes/postgres`, `./volumes/minio`). They hold the MLflow tracking DB and all trained-model artifacts. See [MLflow Stack → Volume Safety](docs/mlflow-stack.md#volume-safety).

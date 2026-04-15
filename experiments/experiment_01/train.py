@@ -36,7 +36,7 @@ VAL_CSV    = os.getenv("VAL_CSV") or os.path.join(EXPERIMENT_DIR, "test.csv")
 CKPT_PATH  = os.getenv("CKPT_PATH") or os.path.join(EXPERIMENT_DIR, "checkpoint.pth")
 
 EPOCHS      = 10
-BATCH_SIZE  = 2
+BATCH_SIZE  = 8
 LR          = 0.01
 NUM_WORKERS = 0
 
