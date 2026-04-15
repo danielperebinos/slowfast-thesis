@@ -20,6 +20,16 @@ slowfast-thesis/
 ├── AGENTS.md                    # this file — AI agent project map
 ├── README.md                    # Romanian-language thesis scope document
 ├── compose.experiments.yml      # MLflow stack: postgres + minio + mlflow server
+├── dashboard/                   # Inference-only Streamlit demo (port 8501)
+│   ├── app.py                   # Streamlit entry (variant + stream picker, live inference)
+│   ├── config.py                # variant registry + preprocessing constants (mirror of core/data_loader)
+│   ├── inference/               # preprocess, model_loader, engine (CUDA-sync timing), metrics (TTA + latency)
+│   ├── ui/                      # Streamlit components + session-state helpers
+│   ├── tests/                   # CPU smoke tests (label-map parity, preprocess shapes, per-variant forward)
+│   ├── Dockerfile               # CUDA 11.8 + Python 3.10 + Streamlit
+│   ├── compose.yml              # slowfast-dashboard stack — read-only bind mounts of ../experiments & ../AVA
+│   ├── Makefile                 # install / run / smoke / up / down / logs (no destructive targets)
+│   └── pyproject.toml           # own deps: streamlit + opencv-headless + pinned torch/pytorchvideo
 ├── deployment/
 │   └── docker/
 │       └── Dockerfile.mlflow    # MLflow server image (psycopg2 + boto3)
@@ -71,6 +81,8 @@ slowfast-thesis/
 | `experiments/core/metrics.py` | `multilabel_accuracy`, `topk_accuracy`, `AverageMeter`, `calculate_tta`. |
 | `experiments/dataset/build_splits.py` | Builds `train.csv` / `test.csv` from AVA CSV + local videos. |
 | `compose.experiments.yml` | Brings up Postgres + MinIO + MLflow stack. |
+| `dashboard/app.py` | Streamlit inference dashboard: live variant+stream demo with latency and TTA. |
+| `dashboard/compose.yml` | Brings up the dashboard container (port 8501, GPU, RO bind mounts of experiments/ and AVA/). |
 | `pyproject.toml` | Dependencies (PyTorch cu118, pytorchvideo, ultralytics, mlflow) and ruff config. |
 | `.env` | Credentials for Postgres / MinIO / MLflow (not committed). |
 
@@ -82,6 +94,7 @@ slowfast-thesis/
 | Architecture | `docs/architecture.md` | Module boundaries and dependency rules (developer view). |
 | Experiments | `docs/experiments.md` | Variants registry, hyperparameters, how to add a new variant. |
 | MLflow Stack | `docs/mlflow-stack.md` | Postgres + MinIO + MLflow server, env vars, volume safety. |
+| Dashboard | `docs/dashboard.md` | Streamlit inference demo: live variant + stream + latency + TTA. |
 | Experiments registry (short) | `experiments/experiments.md` | One-pager variant summary + run commands. |
 | Project spec | `.ai-factory/DESCRIPTION.md` | Full tech-stack and feature spec (authoritative). |
 | Architecture (full) | `.ai-factory/ARCHITECTURE.md` | Complete architecture decisions with examples. |

@@ -1,4 +1,4 @@
-[← Experiments](experiments.md) · [Back to README](../README.md)
+[← Experiments](experiments.md) · [Back to README](../README.md) · [Dashboard →](dashboard.md)
 
 # MLflow Stack
 

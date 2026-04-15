@@ -236,5 +236,6 @@ The sections above are the thesis scope document. Day-to-day development notes l
 | [Architecture](docs/architecture.md) | Module boundaries, dependency rules, training-script skeleton. |
 | [Experiments](docs/experiments.md) | Variants registry, hyperparameters, how to add a new variant. |
 | [MLflow Stack](docs/mlflow-stack.md) | Postgres + MinIO + MLflow server, env vars, volume safety. |
+| [Dashboard](docs/dashboard.md) | Streamlit inference demo — pick variant + stream, see latency and TTA live. |
 
 > ⚠️ **Do not delete Docker volumes** (`./volumes/postgres`, `./volumes/minio`). They hold the MLflow tracking DB and all trained-model artifacts. See [MLflow Stack → Volume Safety](docs/mlflow-stack.md#volume-safety).
