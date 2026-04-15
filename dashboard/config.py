@@ -60,12 +60,13 @@ TIME_OFFSET_SEC: float = 900.0  # AVA file-local time offset
 # ── Dashboard runtime knobs ──────────────────────────────────────────────────
 
 # Target playback FPS. The playback loop fast-skips intervening video frames
-# (via cv2.VideoCapture.grab — no decode) to match this cadence. Streamlit's
-# rerun cycle cannot sustain 25–30 FPS; 12–15 FPS looks smooth and keeps
-# decode + st.image cost down.
+# (via cv2.VideoCapture.grab — no decode) to match this cadence. Paired with
+# JPEG-encoded frames (see JPEG_QUALITY / JPEG_MAX_WIDTH below), the Streamlit
+# wire payload drops ~10–20× vs raw ndarray and 20 FPS is sustainable on a
+# modest host. CPU-only hosts should dial this back via DASHBOARD_PLAYBACK_FPS.
 #
 # Overridable via env var: DASHBOARD_PLAYBACK_FPS=<int>. Clamped to [1, 60].
-PLAYBACK_FPS_CAP: int = max(1, min(60, int(os.getenv("DASHBOARD_PLAYBACK_FPS", "13"))))
+PLAYBACK_FPS_CAP: int = max(1, min(60, int(os.getenv("DASHBOARD_PLAYBACK_FPS", "20"))))
 
 # How often (in *kept* video frames, post frame-skip) to trigger an inference
 # pass during playback. Inference runs on the last NUM_FRAMES frames of the
@@ -84,6 +85,14 @@ DEFAULT_TOPK: int = 5
 
 # Latency history length (entries) for the p50/p95/p99 summary.
 LATENCY_HISTORY: int = 120
+
+# JPEG encode settings for video playback. Baked-HUD frames are encoded
+# before handing them to st.image() so the wire payload drops ~10–20×.
+# Lower quality → smaller payload but more artifacts; the HUD text stays
+# readable down to ~60. max_width downscales larger frames before encoding
+# (aspect preserved, never upscales).
+JPEG_QUALITY: int = max(1, min(100, int(os.getenv("DASHBOARD_JPEG_QUALITY", "78"))))
+JPEG_MAX_WIDTH: int = max(240, min(1920, int(os.getenv("DASHBOARD_JPEG_MAX_WIDTH", "720"))))
 
 
 # ── Variant registry ─────────────────────────────────────────────────────────

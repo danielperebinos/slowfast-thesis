@@ -31,9 +31,10 @@ class Prediction:
 @dataclass
 class InferenceResult:
     topk: list[Prediction]
-    forward_ms: float
-    preprocess_ms: float
-    total_ms: float
+    forward_ms: float          # model(...) wall-clock, CUDA-sync bracketed
+    preprocess_ms: float       # frames → pathway tensors (incl. host→device transfer)
+    post_forward_ms: float     # sigmoid + top-k + .cpu() + Python bookkeeping
+    total_ms: float            # preprocess + forward + post_forward
     probs: np.ndarray  # shape (num_classes,)
     # Dashboard-level metadata filled in by the caller (not by the engine).
     clip_end_sec: float | None = None
@@ -68,6 +69,19 @@ class InferenceEngine:
             device,
             len(label_map),
         )
+
+        # Variants 03 (RoiGuidanceSlowFast) and 04 (HybridSlowFast) store an
+        # ultralytics YOLO object outside the nn.Module hierarchy (via
+        # object.__setattr__(self, "_yolo", yolo)) and call it from inside
+        # `get_roi_mask`. That means `forward_ms` for those variants includes
+        # CPU YOLO inference — real work, but easy to misread as "slow model".
+        # Surface the fact once at construction so operators know why the
+        # number is larger than for variants 01/02.
+        if hasattr(model, "_yolo") or hasattr(getattr(model, "model", None), "_yolo"):
+            logger.info(
+                "variant has external YOLO ROI mask — forward_ms includes CPU YOLO inference "
+                "(~20-50 ms per clip depending on detections)"
+            )
 
     # ── internal helpers ────────────────────────────────────────────────────
 
@@ -134,7 +148,9 @@ class InferenceEngine:
             )
             self._device_logged = True
 
-        total_ms = preprocess_ms + forward_ms
+        # --- post-forward bookkeeping (sigmoid + top-k + cpu transfer) ---
+        # Previously uncounted; now its own bucket so total_ms is honest.
+        t2 = time.perf_counter()
 
         # Multi-label: sigmoid (training loss is BCE-with-logits).
         probs = torch.sigmoid(logits).squeeze(0)
@@ -147,11 +163,20 @@ class InferenceEngine:
             topk.append(Prediction(action=action, score=float(score), class_idx=int(idx)))
 
         probs_np = probs.detach().cpu().numpy()
+        # Final sync so the .cpu() transfer above actually finishes before
+        # the timer stops — otherwise the measurement understates CPU→GPU
+        # bus work on asynchronous CUDA streams.
+        self._sync()
+        post_forward_ms = (time.perf_counter() - t2) * 1000.0
+
+        total_ms = preprocess_ms + forward_ms + post_forward_ms
 
         logger.debug(
-            "inference: preprocess=%.1fms forward=%.1fms top1=%s (%.3f)",
+            "inference: preprocess=%.1fms forward=%.1fms post=%.1fms total=%.1fms top1=%s (%.3f)",
             preprocess_ms,
             forward_ms,
+            post_forward_ms,
+            total_ms,
             topk[0].action,
             topk[0].score,
         )
@@ -160,6 +185,7 @@ class InferenceEngine:
             topk=topk,
             forward_ms=forward_ms,
             preprocess_ms=preprocess_ms,
+            post_forward_ms=post_forward_ms,
             total_ms=total_ms,
             probs=probs_np,
         )

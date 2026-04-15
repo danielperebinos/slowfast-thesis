@@ -21,10 +21,15 @@ logger = get_logger(__name__)
 class HudData:
     """Three-line HUD payload. Any field may be ``None``; the painter shows
     a dash for missing values and never crashes on all-None input.
+
+    ``latency_last_ms`` is the most recent forward-pass measurement (the
+    honest single-sample reading). ``latency_p50_ms`` is the rolling median
+    for context. When both are present the HUD shows them side by side.
     """
 
     action: str | None
     score: float | None  # 0..1
+    latency_last_ms: float | None
     latency_p50_ms: float | None
     tta_sec: float | None
 
@@ -57,11 +62,17 @@ def _format_line(hud: HudData) -> tuple[str, str, str]:
         score = hud.score if hud.score is not None else 0.0
         line1 = f"{hud.action}  {score:.2f}"
 
-    line2 = (
-        f"Latency p50: {hud.latency_p50_ms:.1f} ms"
-        if hud.latency_p50_ms is not None
-        else "Latency p50: — ms"
-    )
+    # Latency line: prefer "last (p50 x)" when both numbers are available;
+    # fall back gracefully when one or both are missing. The last-sample
+    # reading goes first so the user sees the freshest measurement.
+    if hud.latency_last_ms is not None and hud.latency_p50_ms is not None:
+        line2 = f"Latency: {hud.latency_last_ms:.1f} ms (p50 {hud.latency_p50_ms:.1f})"
+    elif hud.latency_last_ms is not None:
+        line2 = f"Latency: {hud.latency_last_ms:.1f} ms"
+    elif hud.latency_p50_ms is not None:
+        line2 = f"Latency p50: {hud.latency_p50_ms:.1f} ms"
+    else:
+        line2 = "Latency: — ms"
 
     if hud.tta_sec is None:
         line3 = "TTA: —"

@@ -32,6 +32,8 @@ from config import (
     EXPERIMENTS_DIR,
     FRAME_BUFFER_SIZE,
     INFERENCE_STRIDE_FRAMES,
+    JPEG_MAX_WIDTH,
+    JPEG_QUALITY,
     NUM_FRAMES,
     PLAYBACK_FPS_CAP,
     TTA_ANNOTATIONS_CSV,
@@ -45,6 +47,7 @@ from inference.preprocess import ClipPreprocessor
 from logging_setup import get_logger, log_cuda_environment
 from ui import components, state
 from ui.overlay import HudData, draw_hud
+from ui.render import frame_to_jpeg_bytes
 
 logger = get_logger(__name__)
 
@@ -218,12 +221,21 @@ def _build_hud(result, latency: LatencyTracker | None, tta_val: float | None) ->
     """Assemble the HUD payload from current session state."""
     action = result.topk[0].action if (result is not None and result.topk) else None
     score = result.topk[0].score if (result is not None and result.topk) else None
-    p50 = None
+    # Latest forward-pass reading — the honest "is this real?" number.
+    latency_last = float(result.forward_ms) if result is not None else None
+    # Rolling median for context / trend.
+    latency_p50 = None
     if latency is not None:
         summary = latency.summary()
         if summary.samples > 0:
-            p50 = summary.p50
-    return HudData(action=action, score=score, latency_p50_ms=p50, tta_sec=tta_val)
+            latency_p50 = summary.p50
+    return HudData(
+        action=action,
+        score=score,
+        latency_last_ms=latency_last,
+        latency_p50_ms=latency_p50,
+        tta_sec=tta_val,
+    )
 
 
 def _render_idle() -> None:
@@ -255,11 +267,14 @@ def _do_playback(single_step: bool) -> None:  # noqa: C901, PLR0912, PLR0915 —
     buffer_sec = FRAME_BUFFER_SIZE / PLAYBACK_FPS_CAP
 
     logger.debug(
-        "playback: video_fps=%.1f target_fps=%d stride=%d buffer_sec=%.2f",
+        "playback: video_fps=%.1f target_fps=%d stride=%d buffer_sec=%.2f "
+        "jpeg_quality=%d jpeg_max_width=%d",
         video_fps,
         PLAYBACK_FPS_CAP,
         stride,
         buffer_sec,
+        JPEG_QUALITY,
+        JPEG_MAX_WIDTH,
     )
 
     frame_idx = 0  # real-video frame index (advances by `stride` per iteration)
@@ -325,17 +340,41 @@ def _do_playback(single_step: bool) -> None:  # noqa: C901, PLR0912, PLR0915 —
             frame_idx += stride
 
             # Bake the HUD onto the frame and render with a single st.image.
+            # JPEG-encode before st.image so Streamlit's websocket carries
+            # ~80KB per frame instead of ~700KB of raw RGB — the biggest
+            # single FPS win available without a streaming-video rewrite.
             hud = _build_hud(
                 state.get_last_result(),
                 latency,
                 state.get_last_tta(),
             )
             frame_with_hud = draw_hud(frame_rgb, hud)
-            placeholder_frame.image(
-                frame_with_hud,
-                caption=f"t = {current_sec:.2f}s",
-                use_container_width=True,
-            )
+            try:
+                jpeg_payload = frame_to_jpeg_bytes(
+                    frame_with_hud,
+                    quality=JPEG_QUALITY,
+                    max_width=JPEG_MAX_WIDTH,
+                )
+                placeholder_frame.image(
+                    jpeg_payload,
+                    caption=f"t = {current_sec:.2f}s",
+                    use_container_width=True,
+                )
+                if should_infer:
+                    # Tie the size log to inference ticks to avoid per-frame spam.
+                    logger.debug(
+                        "jpeg frame: h=%d w=%d bytes=%d",
+                        frame_with_hud.shape[0],
+                        frame_with_hud.shape[1],
+                        len(jpeg_payload),
+                    )
+            except Exception as err:  # noqa: BLE001 — never let encode kill playback
+                logger.error("jpeg encode failed at kept_frame=%d: %s", kept_idx, err)
+                placeholder_frame.image(
+                    frame_with_hud,
+                    caption=f"t = {current_sec:.2f}s",
+                    use_container_width=True,
+                )
 
             if total_frames > 0:
                 placeholder_progress.progress(min(1.0, frame_idx / total_frames))

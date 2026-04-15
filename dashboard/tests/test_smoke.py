@@ -159,6 +159,50 @@ def test_latency_tracker_empty_summary() -> None:
 # ── 14.6 — GPU parameter placement ─────────────────────────────────────────
 
 
+# ── 14.8 — JPEG encoder ──────────────────────────────────────────────────────
+
+
+def test_frame_to_jpeg_bytes_returns_nonempty_jpeg() -> None:
+    from ui.render import frame_to_jpeg_bytes
+
+    frame = np.random.randint(0, 256, size=(360, 640, 3), dtype=np.uint8)
+    payload = frame_to_jpeg_bytes(frame, quality=78, max_width=720)
+
+    assert isinstance(payload, bytes)
+    assert len(payload) > 100  # non-trivial JPEG
+    # JPEG SOI marker is 0xFFD8
+    assert payload[:2] == b"\xff\xd8"
+
+
+def test_frame_to_jpeg_bytes_downscales_preserving_aspect() -> None:
+    import cv2
+
+    from ui.render import frame_to_jpeg_bytes
+
+    frame = np.random.randint(0, 256, size=(1080, 1920, 3), dtype=np.uint8)
+    payload = frame_to_jpeg_bytes(frame, quality=78, max_width=720)
+    decoded = cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_COLOR)
+
+    assert decoded is not None
+    assert decoded.shape[1] == 720  # width capped
+    # Aspect ratio within 1 pixel of original (1920/1080 * 720 ≈ 405)
+    assert abs(decoded.shape[0] - 405) <= 1
+
+
+def test_frame_to_jpeg_bytes_does_not_upscale() -> None:
+    import cv2
+
+    from ui.render import frame_to_jpeg_bytes
+
+    frame = np.random.randint(0, 256, size=(240, 320, 3), dtype=np.uint8)
+    payload = frame_to_jpeg_bytes(frame, quality=78, max_width=720)
+    decoded = cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_COLOR)
+
+    assert decoded is not None
+    # max_width=720 > frame width 320, so no resize should happen
+    assert decoded.shape[:2] == (240, 320)
+
+
 # ── 14.7 — HUD overlay invariants ────────────────────────────────────────────
 
 
@@ -169,6 +213,7 @@ def test_draw_hud_preserves_shape_and_dtype() -> None:
     hud = HudData(
         action="pick up",
         score=0.73,
+        latency_last_ms=23.7,
         latency_p50_ms=21.4,
         tta_sec=-0.35,
     )
@@ -183,7 +228,13 @@ def test_draw_hud_handles_none_fields_and_small_frame() -> None:
     from ui.overlay import HudData, draw_hud
 
     frame = np.zeros((224, 224, 3), dtype=np.uint8)
-    hud = HudData(action=None, score=None, latency_p50_ms=None, tta_sec=None)
+    hud = HudData(
+        action=None,
+        score=None,
+        latency_last_ms=None,
+        latency_p50_ms=None,
+        tta_sec=None,
+    )
     out = draw_hud(frame, hud)
 
     assert out.shape == frame.shape
