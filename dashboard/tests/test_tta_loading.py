@@ -112,3 +112,16 @@ def test_tta_all_csvs_missing_returns_none(tmp_path: Path) -> None:
         "ANY_VID",
     )
     assert computer is None
+
+
+def test_tta_step_matches_with_string_actions(train_csv: Path) -> None:
+    """TTAComputer.step() returns non-None TTA when predicted actions are
+    strings matching the CSV integer action IDs (the type fix in model_loader).
+    """
+    computer = _load_and_build((train_csv,), "TRAIN_VID_A")
+    assert computer is not None
+    # CSV has ts=902 with action=12 for TRAIN_VID_A.
+    # clip_end_local_sec = (ts - TIME_OFFSET) - ANTICIPATION_GAP = (902 - 900) - 1 = 1.0
+    # Predicted actions as strings (matching the str(aid) fix in model_loader).
+    tta = computer.step(1.0, {"12", "80"})
+    assert tta is not None, "TTA should match when predicted_actions are strings"

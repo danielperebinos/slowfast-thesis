@@ -113,17 +113,62 @@ def video_frame_preview(frame_rgb: np.ndarray | None, current_sec: float | None)
     st.image(frame_rgb, caption=caption, use_container_width=True)
 
 
+def stats_panel(
+    result: InferenceResult | None,
+    latency: LatencyTracker | None,
+    tta_value: float | None,
+) -> None:
+    """Headline metrics row rendered above the video frame.
+
+    Four ``st.metric`` cards: Predicted Action, Confidence, Latency, TTA.
+    All values degrade to "—" when data is not yet available.
+    """
+    c_action, c_conf, c_lat, c_tta = st.columns(4)
+
+    if result is not None and result.topk:
+        top = result.topk[0]
+        c_action.metric("Predicted Action", top.action)
+        c_conf.metric("Confidence", f"{top.score:.1%}")
+    else:
+        c_action.metric("Predicted Action", "—")
+        c_conf.metric("Confidence", "—")
+
+    if result is not None:
+        lat_label = format_ms(result.forward_ms)
+        lat_delta = None
+        if latency is not None:
+            summary = latency.summary()
+            if summary.samples > 0:
+                lat_delta = f"p50: {format_ms(summary.p50)}"
+        c_lat.metric("Latency", lat_label, delta=lat_delta, delta_color="off")
+    else:
+        c_lat.metric("Latency", "—")
+
+    if tta_value is not None:
+        sign = "+" if tta_value >= 0 else "\u2212"
+        tta_label = f"{sign}{abs(tta_value):.2f} s"
+        tta_delta = "late" if tta_value >= 0 else "early"
+        # Invert color so "early" (negative TTA, desired) shows green.
+        c_tta.metric("TTA", tta_label, delta=tta_delta, delta_color="inverse")
+    else:
+        c_tta.metric("TTA", "—")
+
+    logger.debug(
+        "stats_panel: action=%s tta=%s",
+        result.topk[0].action if result is not None and result.topk else None,
+        tta_value,
+    )
+
+
 def results_panel(
     result: InferenceResult | None,
     latency: LatencyTracker | None,
-    tta_value: float | None,  # noqa: ARG001 — kept in signature, HUD owns the TTA metric
 ) -> None:
     """Drill-down panel for the Details expander.
 
-    The 3 headline metrics (Forward, FPS, TTA) are rendered by the on-video
-    HUD; this panel now shows only the long-tail: a latency-history line
-    chart, a percentile caption, the top-k bar chart, and a raw-probs table
-    for debugging.
+    Shows latency-history line chart, percentile caption, top-k bar chart,
+    and a raw-probs table for debugging. Headline metrics are in the stats
+    panel above the video.
     """
     if result is None and (latency is None or len(latency) == 0):
         st.caption("Details appear after the first inference pass.")

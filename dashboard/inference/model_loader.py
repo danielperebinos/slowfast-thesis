@@ -238,7 +238,7 @@ def load_label_map(train_csv: Path | str | None = None) -> dict[str, int]:
         raise FileNotFoundError(f"Label-map CSV not found: {path}")
     df = pd.read_csv(path)
     action_ids = sorted(df["action"].unique().tolist())
-    label_map = {aid: i for i, aid in enumerate(action_ids)}
+    label_map = {str(aid): i for i, aid in enumerate(action_ids)}
     logger.debug("load_label_map: csv=%s classes=%d", path, len(label_map))
     return label_map
 
