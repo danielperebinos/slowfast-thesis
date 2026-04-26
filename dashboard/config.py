@@ -41,8 +41,12 @@ YOLO_WEIGHTS: Path = EXPERIMENTS_DIR / "yolov8n.pt"
 # experiment_01's copy is authoritative.
 LABEL_MAP_CSV: Path = EXPERIMENTS_DIR / "experiment_01" / "train.csv"
 
-# Test CSV (AVA ground-truth annotations) used for live TTA lookup.
-TTA_ANNOTATIONS_CSV: Path = EXPERIMENTS_DIR / "experiment_01" / "test.csv"
+# AVA ground-truth annotation CSVs used for live TTA lookup.
+# Both train and test splits are loaded so TTA works for all local videos.
+TTA_ANNOTATIONS_CSVS: tuple[Path, ...] = (
+    EXPERIMENTS_DIR / "experiment_01" / "train.csv",
+    EXPERIMENTS_DIR / "experiment_01" / "test.csv",
+)
 
 # ── Preprocessing constants — must match experiments/core/data_loader.py ─────
 
@@ -139,10 +143,11 @@ DEFAULT_VARIANT_KEY: str = "01_baseline"
 
 
 logger.debug(
-    "config loaded: project_root=%s experiments=%s video_dir=%s variants=%d playback_fps_cap=%d",
+    "config loaded: project_root=%s experiments=%s video_dir=%s variants=%d playback_fps_cap=%d tta_csvs=%s",
     PROJECT_ROOT,
     EXPERIMENTS_DIR,
     VIDEO_DIR,
     len(VARIANTS),
     PLAYBACK_FPS_CAP,
+    [str(p) for p in TTA_ANNOTATIONS_CSVS],
 )

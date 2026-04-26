@@ -36,7 +36,7 @@ from config import (
     JPEG_QUALITY,
     NUM_FRAMES,
     PLAYBACK_FPS_CAP,
-    TTA_ANNOTATIONS_CSV,
+    TTA_ANNOTATIONS_CSVS,
     VARIANTS,
     VIDEO_DIR,
 )
@@ -126,22 +126,32 @@ def _ensure_engine_ready(variant_key: str, device: torch.device) -> InferenceEng
 def _build_tta_computer(video_path: Path) -> TTAComputer | None:
     """Look up AVA annotations for this clip and wrap them in a TTAComputer.
 
-    Returns None if the annotations CSV is missing or contains no rows for
-    the currently selected video.
+    Loads annotations from all configured CSVs (train + test splits) and
+    concatenates them so TTA works for every local video, not just the
+    test split.  Returns None if no CSV could be read or the video has no
+    matching annotations.
     """
-    if not TTA_ANNOTATIONS_CSV.exists():
-        logger.debug("TTA CSV missing: %s", TTA_ANNOTATIONS_CSV)
+    frames: list[pd.DataFrame] = []
+    for csv_path in TTA_ANNOTATIONS_CSVS:
+        if not csv_path.exists():
+            logger.warning("TTA CSV missing, skipping: %s", csv_path)
+            continue
+        try:
+            frames.append(pd.read_csv(csv_path))
+            logger.debug("TTA CSV loaded: %s (%d rows)", csv_path, len(frames[-1]))
+        except Exception as err:  # noqa: BLE001
+            logger.warning("failed to read TTA CSV %s: %s", csv_path, err)
+    if not frames:
+        logger.debug("no TTA CSVs could be loaded")
         return None
-    try:
-        df = pd.read_csv(TTA_ANNOTATIONS_CSV)
-    except Exception as err:  # noqa: BLE001
-        logger.warning("failed to read TTA CSV %s: %s", TTA_ANNOTATIONS_CSV, err)
-        return None
+    df = pd.concat(frames, ignore_index=True)
+    logger.debug("TTA annotations merged: %d total rows from %d CSVs", len(df), len(frames))
     vid_id = video_path.stem
     subset = df[df["video_id"] == vid_id]
     if subset.empty:
         logger.debug("no AVA annotations for video_id=%s", vid_id)
         return None
+    logger.debug("TTA annotations for video_id=%s: %d rows", vid_id, len(subset))
     return TTAComputer(subset)
 
 
